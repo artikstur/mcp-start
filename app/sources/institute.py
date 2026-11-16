@@ -34,6 +34,20 @@ def _same_site(url: str) -> bool:
     )
 
 
+def _extract_main_text(soup: BeautifulSoup) -> str:
+    main = soup.select_one("#ss_content .area_width") or soup.find("main") or soup
+
+    for element in main.select("script, style, noscript, svg, nav, header, footer, ul.menu_list_left"):
+        element.decompose()
+
+    first_heading = main.find(["h1", "h2", "h3"])
+    for navigation in list(main.find_all(["ul", "ol"])):
+        if first_heading is None or navigation.find_previous(["h1", "h2", "h3"]) is None:
+            navigation.decompose()
+
+    return _normalize(main.get_text(" ", strip=True))
+
+
 # ---------------------------------------------------------
 # Levenshtein
 # ---------------------------------------------------------
@@ -240,17 +254,7 @@ async def _extract_page(url: str) -> dict:
         else ""
     )
 
-    # Убираем технические элементы.
-    for element in soup(
-            ["script", "style", "noscript", "svg"]
-    ):
-        element.decompose()
-
-    main = soup.find("main") or soup
-
-    text = _normalize(
-        main.get_text(" ", strip=True)
-    )
+    text = _extract_main_text(soup)
 
     links = []
 

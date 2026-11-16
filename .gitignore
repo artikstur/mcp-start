@@ -5,7 +5,19 @@ __pycache__/
 .env
 .env.*
 !.env.example
+# Local runtime state
+data/
 *.log
+log.jsonl
+steps.jsonl
+audit.jsonl
+# Generated presentation files
+.presentation-build/
+outputs/
+# Local notes and plans; keep docs/corpus because the RAG tool reads it.
+docs/demo-card.md
+docs/stress-test-*.md
+docs/superpowers/
 .DS_Store
 .vscode/
 .idea/

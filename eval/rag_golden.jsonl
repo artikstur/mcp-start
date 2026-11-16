@@ -1,0 +1,15 @@
+{"id":1,"q":"Какова миссия Института фундаментальной медицины и биологии?","expected_sources":["institute_structure.txt"]}
+{"id":2,"q":"Какие высшие школы входят в структуру ИФМиБ?","expected_sources":["institute_structure.txt"]}
+{"id":3,"q":"Какие подразделения указаны в организационной структуре института?","expected_sources":["institute_structure.txt"]}
+{"id":4,"q":"Какие кафедры и учебно-научные подразделения перечислены в структуре ИФМиБ?","expected_sources":["institute_structure.txt"]}
+{"id":5,"q":"Как устроен симуляционный центр института?","expected_sources":["institute_structure.txt"]}
+{"id":6,"q":"Какие лаборатории входят в Научный центр Регуляторная геномика?","expected_sources":["regulatory_genomics.txt"]}
+{"id":7,"q":"Кто руководит лабораторией Регуляторной геномики?","expected_sources":["regulatory_genomics.txt"]}
+{"id":8,"q":"Какие задачи выполняет научный центр регуляторной геномики?","expected_sources":["regulatory_genomics.txt"]}
+{"id":9,"q":"Какие методы геномики применяют в центре?","expected_sources":["regulatory_genomics.txt"]}
+{"id":10,"q":"Какие специальности предлагает Высшая школа медицины на специалитете?","expected_sources":["specialitet.txt"]}
+{"id":11,"q":"Сколько лет длится обучение на лечебном деле?","expected_sources":["specialitet.txt"]}
+{"id":12,"q":"Какой код у программы стоматологии?","expected_sources":["specialitet.txt"]}
+{"id":13,"q":"Какие программы бакалавриата есть в Высшей школе биологии?","expected_sources":["biology_programs.txt"]}
+{"id":14,"q":"Какие профили объединяет программа педагогического образования по биологии?","expected_sources":["biology_programs.txt"]}
+{"id":15,"q":"Какая программа магистратуры указана у Высшей школы биологии?","expected_sources":["biology_programs.txt"]}

@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import httpx
+import os
 
 from .config import settings
+
+
+def _tls_verify(environ: dict[str, str] | None = None) -> bool | str:
+    values = os.environ if environ is None else environ
+    return values.get("KPFU_CA_BUNDLE") or True
+
 
 _CLIENT_KWARGS = {
     "timeout": settings.request_timeout,
     "follow_redirects": True,
-    "verify": False,  # Russian edu sites often use Mintsifry certs not in default trust store
+    "verify": _tls_verify(),
 }
 
 
