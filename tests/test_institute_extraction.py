@@ -2,7 +2,9 @@ import unittest
 
 from bs4 import BeautifulSoup
 
-from app.sources.institute import _extract_main_text
+from unittest.mock import AsyncMock, patch
+
+from app.sources.institute import _expand_query, _extract_main_text, search_institute_info
 
 
 class InstituteExtractionTests(unittest.TestCase):
@@ -23,6 +25,29 @@ class InstituteExtractionTests(unittest.TestCase):
         self.assertIn("В институт входят", text)
         self.assertNotIn("Телефон приемной комиссии", text)
         self.assertNotIn("Сторонняя навигационная ссылка", text)
+
+    def test_training_program_query_expands_to_site_vocabulary(self):
+        expanded = _expand_query("Какие направления подготовки есть в ИФМиБ КФУ?")
+
+        self.assertIn("образовательные программы", expanded)
+        self.assertIn("бакалавриат", expanded)
+        self.assertIn("специалитет", expanded)
+
+    def test_training_program_search_matches_official_program_page(self):
+        pages = [{
+            "title": "Основные образовательные программы Высшей школы биологии",
+            "url": "https://kpfu.ru/biology-medicine/programs",
+            "text": "Бакалавриат 06.03.01 Биология. Магистратура 06.04.01 Биология.",
+        }]
+
+        async def run():
+            with patch("app.sources.institute.crawl_pages", new=AsyncMock(return_value=pages)):
+                return await search_institute_info("Какие направления подготовки есть в ИФМиБ КФУ?")
+
+        import asyncio
+        results = asyncio.run(run())
+
+        self.assertEqual(results[0]["url"], pages[0]["url"])
 
 
 if __name__ == "__main__":

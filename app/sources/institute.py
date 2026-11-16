@@ -18,6 +18,14 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _expand_query(query: str) -> str:
+    """Add official site terms commonly used for student program questions."""
+    normalized = query.casefold().replace("ё", "е")
+    if "направлен" in normalized and ("подготов" in normalized or "обучен" in normalized):
+        return f"{query} образовательные программы бакалавриат специалитет магистратура ординатура"
+    return query
+
+
 def _tokenize(text: str) -> list[str]:
     return [
         word.lower()
@@ -329,10 +337,10 @@ async def crawl_pages() -> list[dict]:
 
 async def search_institute_info(
         query: str,
-        limit: int = 5,
+        limit: int = 12,
 ) -> list[dict]:
 
-    query = _normalize(query)
+    query = _normalize(_expand_query(query))
 
     if not query:
         return []

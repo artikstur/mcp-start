@@ -1,9 +1,19 @@
 import unittest
 
-from app.rag import chunk_text, rank_chunks, source_recall_at_k
+from app.rag import _read_corpus, chunk_text, rank_chunks, source_recall_at_k
 
 
 class RAGTests(unittest.TestCase):
+    def test_corpus_includes_official_exam_schedule_page(self):
+        documents = _read_corpus()
+        exam_page = next(doc for doc in documents if doc["source"] == "exam_schedules.txt")
+
+        self.assertEqual(
+            exam_page["url"],
+            "https://kpfu.ru/biology-medicine/uchebnyj-process/raspisanie-zachjotov-i-ekzamenov",
+        )
+        self.assertIn("не содержит календаря экзаменов", exam_page["text"])
+
     def test_chunks_overlap_and_keep_source_metadata(self):
         text = "a" * 1800
 

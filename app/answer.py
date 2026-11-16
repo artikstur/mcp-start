@@ -19,6 +19,38 @@ def parse_answer(content: str) -> Answer:
     return Answer.model_validate_json(content)
 
 
+def format_schedule_answer(payload: dict) -> str:
+    """Render verified schedule rows without asking the model to reconstruct them."""
+    if payload.get("status") != "ok":
+        message = payload.get("message")
+        return str(message) if message else "Не удалось получить подтверждённое расписание."
+
+    lines = [f"Расписание группы {payload.get('group', '')}:"]
+    current_day = None
+    for source in payload.get("sources", []):
+        for entry in source.get("classes", []):
+            weekday = entry.get("weekday") or "День не указан"
+            if weekday != current_day:
+                lines.extend(("", f"**{weekday.capitalize()}:**"))
+                current_day = weekday
+
+            time = str(entry.get("time") or "Время не указано")
+            source_time = str(entry.get("source_time") or "")
+            normalize_time = lambda value: value.replace(":", ".").replace(" ", "")
+            if source_time and normalize_time(source_time) != normalize_time(time):
+                time += f" (в строке таблицы {source_time}; время расходится)"
+
+            subgroup = str(entry.get("subgroup") or "").strip()
+            subgroup_label = f" (подгруппа {subgroup})" if subgroup else ""
+            classes = ", ".join(str(value) for value in entry.get("classes", []))
+            lines.append(f"- {time} — {classes}{subgroup_label}")
+
+    source_page = payload.get("source_page")
+    if source_page:
+        lines.extend(("", f"Источник: [официальное расписание ИФМиБ]({source_page})"))
+    return "\n".join(lines)
+
+
 def provider_cost_usd(usage) -> float | None:
     if usage is None:
         return None
@@ -46,7 +78,8 @@ def enforce_tool_evidence(
     missing_tool = answer.found and (
         not answer.source_tool or answer.source_tool not in evidence_tools
     )
-    missing_document_source = answer.found and answer.source_tool == "search_docs" and not valid_sources
+    requires_source = answer.source_tool in {"search_docs", "search_institute_info"}
+    missing_document_source = answer.found and requires_source and not valid_sources
     if missing_tool or missing_document_source:
         return Answer(
             answer="Не могу подтвердить ответ по доступным официальным источникам.",
@@ -74,6 +107,25 @@ def tool_result_has_evidence(tool_name: str, content: str) -> bool:
     return False
 
 
+def tool_result_source_urls(tool_name: str, content: str) -> set[str]:
+    """Return source URLs supplied by successful retrieval tools this turn."""
+    try:
+        payload = json.loads(content)
+    except (TypeError, json.JSONDecodeError):
+        return set()
+
+    if tool_name == "search_docs" and isinstance(payload, dict):
+        records = payload.get("sources", [])
+    elif tool_name == "search_institute_info" and isinstance(payload, list):
+        records = payload
+    else:
+        return set()
+    return {
+        record["url"] for record in records
+        if isinstance(record, dict) and isinstance(record.get("url"), str)
+    }
+
+
 def cited_source_ids(answer: Answer, available_sources: dict[int, str]) -> list[int]:
     return [source_id for source_id in answer.sources if source_id in available_sources]
 
@@ -94,6 +146,22 @@ def remap_source_ids(
         sources.append(updated)
         next_source_id += 1
     mapped["sources"] = sources
+    return mapped, next_source_id
+
+
+def remap_source_records(
+    records: list[dict],
+    available_sources: dict[int, str],
+    next_source_id: int,
+) -> tuple[list[dict], int]:
+    """Assign turn-wide IDs to source records returned as a list."""
+    mapped = []
+    for source in records:
+        if not isinstance(source, dict) or not isinstance(source.get("url"), str):
+            continue
+        mapped.append({**source, "id": next_source_id})
+        available_sources[next_source_id] = source["url"]
+        next_source_id += 1
     return mapped, next_source_id
 
 

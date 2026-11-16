@@ -66,9 +66,39 @@ class ScheduleTests(unittest.IsolatedAsyncioTestCase):
         result = select_group_schedule([sheet], "01.2-621")
         absent = select_group_schedule([sheet], "01.2-6210")
 
-        self.assertEqual(result, [{"sheet": "1 курс", "weekday": "понедельник",
-                                  "time": "8.30-10.00", "classes": ["Анатомия", "Биология"]}])
+        self.assertEqual(result, [
+            {"sheet": "1 курс", "weekday": "понедельник", "time": "8.30-10.00",
+             "source_time": "8.30-10.00", "subgroup": "01.2-621а", "classes": ["Анатомия"]},
+            {"sheet": "1 курс", "weekday": "понедельник", "time": "8.30-10.00",
+             "source_time": "8.30-10.00", "subgroup": "01.2-621б", "classes": ["Биология"]},
+        ])
         self.assertIsNone(absent)
+
+    def test_parent_group_keeps_subgroups_separate_and_prefers_cell_time(self):
+        sheet = {"name": "2 курс", "rows": [
+            ["", "Номер группы", "01.2-513", ""],
+            ["", "Номер п/группы", "01.2-513а", "01.2-513б"],
+            ["понедельник", "10.10-11.40", '10.00-11.30 Элективные курсы (СК "Бустан")',
+             '10.00-11.30 Элективные курсы (СК "Бустан")'],
+            ["", "12.10-13.40", "Статистические методы", ""],
+        ]}
+
+        result = select_group_schedule([sheet], "01.2-513")
+
+        self.assertEqual(
+            result,
+            [
+                {"sheet": "2 курс", "weekday": "понедельник", "time": "10.00-11.30",
+                 "source_time": "10.10-11.40", "subgroup": "01.2-513а",
+                 "classes": ['Элективные курсы (СК "Бустан")']},
+                {"sheet": "2 курс", "weekday": "понедельник", "time": "10.00-11.30",
+                 "source_time": "10.10-11.40", "subgroup": "01.2-513б",
+                 "classes": ['Элективные курсы (СК "Бустан")']},
+                {"sheet": "2 курс", "weekday": "понедельник", "time": "12.10-13.40",
+                 "source_time": "12.10-13.40", "subgroup": "01.2-513а",
+                 "classes": ["Статистические методы"]},
+            ],
+        )
 
     def test_target_date_filters_weekday_and_active_academic_week(self):
         sheet = {"name": "1 курс", "rows": [

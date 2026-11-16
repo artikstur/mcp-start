@@ -116,6 +116,14 @@ def _class_applies_to_week(text: str, week: int) -> bool:
     return True
 
 
+def _cell_time(text: str) -> tuple[str | None, str]:
+    """Return an explicit time prefix from a class cell, if it has one."""
+    match = re.match(r"^\s*(\d{1,2}[.:]\d{2}\s*[-–]\s*\d{1,2}[.:]\d{2})\s*(.*)$", text)
+    if not match:
+        return None, text
+    return match.group(1).replace(":", "."), match.group(2).strip()
+
+
 def select_group_schedule(
     sheets: list[dict],
     group: str,
@@ -152,10 +160,18 @@ def select_group_schedule(
                 ]
                 if _normalize_group(group_header) == requested:
                     found_group = True
-                    selected_cols = list(range(start_col, end_col))
+                    if any("п/группы" in cell.casefold() for cell in subgroup_row):
+                        subgroup_columns = [
+                            (col, subgroup_row[col])
+                            for col in range(start_col, min(end_col, len(subgroup_row)))
+                            if subgroup_row[col].strip()
+                        ]
+                        selected_columns = subgroup_columns or [(col, "") for col in range(start_col, end_col)]
+                    else:
+                        selected_columns = [(col, "") for col in range(start_col, end_col)]
                 elif subgroup_cols:
                     found_group = True
-                    selected_cols = subgroup_cols
+                    selected_columns = [(col, subgroup_row[col]) for col in subgroup_cols]
                 else:
                     continue
 
@@ -172,18 +188,21 @@ def select_group_schedule(
                         continue
                     if day_number is not None and _WEEKDAYS[current_day] != day_number:
                         continue
-                    values = [
-                        data_row[col].strip() for col in selected_cols
-                        if col < len(data_row) and data_row[col].strip()
-                    ]
-                    if week is not None:
-                        values = [value for value in values if _class_applies_to_week(value, week)]
-                    if values:
+                    source_time = data_row[1].strip() if len(data_row) > 1 else ""
+                    for col, subgroup in selected_columns:
+                        if col >= len(data_row) or not data_row[col].strip():
+                            continue
+                        raw_value = data_row[col].strip()
+                        if week is not None and not _class_applies_to_week(raw_value, week):
+                            continue
+                        explicit_time, value = _cell_time(raw_value)
                         results.append({
                             "sheet": sheet.get("name", ""),
                             "weekday": current_day,
-                            "time": data_row[1].strip() if len(data_row) > 1 else "",
-                            "classes": values,
+                            "time": explicit_time or source_time,
+                            "source_time": source_time,
+                            "subgroup": subgroup.strip(),
+                            "classes": [value or raw_value],
                         })
     return results if found_group else None
 

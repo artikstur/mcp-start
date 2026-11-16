@@ -9,12 +9,37 @@ from app.answer import (
     parse_answer,
     provider_cost_usd,
     remap_source_ids,
+    remap_source_records,
     sanitize_markdown_links,
     tool_result_has_evidence,
+    tool_result_source_urls,
 )
 
 
 class AnswerSchemaTests(unittest.TestCase):
+    def test_schedule_formatter_keeps_subgroups_and_conflicting_source_time(self):
+        from app.answer import format_schedule_answer
+
+        text = format_schedule_answer({
+            "status": "ok",
+            "group": "01.2-513",
+            "source_page": "https://kpfu.ru/exams",
+            "sources": [{"classes": [
+                {"weekday": "понедельник", "time": "10.00-11.30",
+                 "source_time": "10.10-11.40", "subgroup": "01.2-513а",
+                 "classes": ["Элективная физкультура"]},
+                {"weekday": "понедельник", "time": "12.10-13.40",
+                 "source_time": "12.10-13.40", "subgroup": "01.2-513б",
+                 "classes": ["Анатомия"]},
+            ]}],
+        })
+
+        self.assertIn("01.2-513а", text)
+        self.assertIn("01.2-513б", text)
+        self.assertIn("10.00-11.30", text)
+        self.assertIn("10.10-11.40", text)
+        self.assertIn("https://kpfu.ru/exams", text)
+
     def test_accepts_valid_answer_schema(self):
         answer = parse_answer(
             '{"answer":"Нашёл документ.","source_tool":"search_docs",'
@@ -39,11 +64,22 @@ class AnswerSchemaTests(unittest.TestCase):
         self.assertIn("не могу подтвердить", checked.answer.casefold())
 
     def test_tool_answer_is_allowed_when_that_source_returned_evidence(self):
-        answer = Answer(answer="Код 31.05.03", source_tool="search_institute_info", found=True, sources=[])
+        answer = Answer(answer="Код 31.05.03", source_tool="search_institute_info", found=True, sources=[1])
 
-        checked = enforce_tool_evidence(answer, evidence_tools={"search_institute_info"})
+        checked = enforce_tool_evidence(
+            answer, evidence_tools={"search_institute_info"}, available_source_ids={1}
+        )
 
         self.assertTrue(checked.found)
+
+    def test_institute_answer_requires_a_selected_result(self):
+        answer = Answer(answer="Программы есть", source_tool="search_institute_info", found=True, sources=[])
+
+        checked = enforce_tool_evidence(
+            answer, evidence_tools={"search_institute_info"}, available_source_ids={1}
+        )
+
+        self.assertFalse(checked.found)
 
     def test_search_answer_requires_a_valid_selected_source(self):
         answer = Answer(answer="Код 31.05.03", source_tool="search_docs", found=True, sources=[])
@@ -104,6 +140,24 @@ class AnswerSchemaTests(unittest.TestCase):
         result = sanitize_markdown_links(text, {"https://kpfu.ru/page"})
 
         self.assertEqual(result, "[valid](https://kpfu.ru/page) fake")
+
+    def test_official_search_results_are_allowed_as_citation_links(self):
+        urls = tool_result_source_urls(
+            "search_institute_info",
+            '[{"title":"Расписание","url":"https://kpfu.ru/exams"}]',
+        )
+
+        self.assertEqual(urls, {"https://kpfu.ru/exams"})
+
+    def test_institute_search_results_receive_turn_wide_source_ids(self):
+        sources = {}
+        rows, next_id = remap_source_records(
+            [{"title": "Программы", "url": "https://kpfu.ru/programs"}], sources, 4
+        )
+
+        self.assertEqual(rows[0]["id"], 4)
+        self.assertEqual(next_id, 5)
+        self.assertEqual(sources, {4: "https://kpfu.ru/programs"})
 
     def test_provider_reported_cost_is_used_when_available(self):
         self.assertEqual(provider_cost_usd({"cost": 0.00123}), 0.00123)

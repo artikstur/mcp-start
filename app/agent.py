@@ -20,11 +20,14 @@ from .answer import (
     Answer,
     cited_source_ids,
     enforce_tool_evidence,
+    format_schedule_answer,
     parse_answer,
     provider_cost_usd,
     remap_source_ids,
+    remap_source_records,
     sanitize_markdown_links,
     tool_result_has_evidence,
+    tool_result_source_urls,
 )
 from .security import audit_tool_call, cli_identity, is_tool_allowed
 from .storage import SQLiteStore
@@ -275,6 +278,8 @@ async def run_openrouter_mcp(
             ]
 
             source_urls: dict[int, str] = {}
+            source_tools: dict[int, str] = {}
+            trusted_source_urls: set[str] = set()
             next_source_id = 1
             format_retry_used = False
             evidence_retry_used = False
@@ -339,8 +344,9 @@ async def run_openrouter_mcp(
                     has_tool_evidence = (
                         parsed_answer.source_tool in evidence_tools
                         and (
-                            parsed_answer.source_tool != "search_docs"
-                            or any(source_id in source_urls for source_id in parsed_answer.sources)
+                            parsed_answer.source_tool not in {"search_docs", "search_institute_info"}
+                            or any(source_tools.get(source_id) == parsed_answer.source_tool
+                                   for source_id in parsed_answer.sources)
                         )
                     )
                     if parsed_answer.found and not has_tool_evidence:
@@ -351,18 +357,22 @@ async def run_openrouter_mcp(
                                 {"role": "user", "content": (
                                     "Фактический ответ должен опираться на MCP-инструмент, вызванный в этом ходе. "
                                     "Вызови подходящий доступный инструмент и отвечай только по его результату. "
-                                    "Для search_docs укажи только ID конкретных фрагментов из результатов этого хода. "
+                                    "Для search_docs и search_institute_info укажи только ID подходящих источников "
+                                    "из результатов этого хода. "
                                     "Если подтверждения нет, верни found=false, source_tool=null и sources=[]."
                                 )},
                             ))
                             continue
                         parsed_answer = enforce_tool_evidence(
-                            parsed_answer, evidence_tools, set(source_urls)
+                            parsed_answer,
+                            evidence_tools,
+                            {source_id for source_id, tool in source_tools.items()
+                             if tool == parsed_answer.source_tool},
                         )
 
                     answer = parsed_answer.answer
-                    if parsed_answer.source_tool == "search_docs":
-                        answer = sanitize_markdown_links(answer, set(source_urls.values()))
+                    if parsed_answer.source_tool in {"search_docs", "search_institute_info"}:
+                        answer = sanitize_markdown_links(answer, trusted_source_urls)
                     citations = [
                         (source_id, source_urls[source_id])
                         for source_id in cited_source_ids(parsed_answer, source_urls)
@@ -448,9 +458,29 @@ async def run_openrouter_mcp(
                             document_result, next_source_id = remap_source_ids(
                                 document_result, source_urls, next_source_id
                             )
+                            source_tools.update({
+                                source["id"]: "search_docs"
+                                for source in document_result.get("sources", [])
+                                if isinstance(source, dict) and isinstance(source.get("id"), int)
+                            })
                             tool_content = json.dumps(document_result, ensure_ascii=False)
                         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
                             pass
+                    elif call.function.name == "search_institute_info":
+                        try:
+                            institute_sources = json.loads(tool_content)
+                            institute_sources, next_source_id = remap_source_records(
+                                institute_sources, source_urls, next_source_id
+                            )
+                            source_tools.update({
+                                source["id"]: "search_institute_info" for source in institute_sources
+                            })
+                            tool_content = json.dumps(institute_sources, ensure_ascii=False)
+                        except (TypeError, ValueError, json.JSONDecodeError):
+                            pass
+                    trusted_source_urls.update(
+                        tool_result_source_urls(call.function.name, tool_content)
+                    )
                     if tool_result_has_evidence(call.function.name, tool_content):
                         evidence_tools.add(call.function.name)
                     if call.function.name == "search_docs":
@@ -462,6 +492,14 @@ async def run_openrouter_mcp(
                             embedding_cost_estimated |= bool(embedding_usage.get("cost_is_estimated", False))
                         except (KeyError, TypeError, ValueError):
                             pass
+
+                    if call.function.name == "get_group_schedule" and len(message.tool_calls) == 1:
+                        try:
+                            schedule_result = json.loads(tool_content)
+                        except json.JSONDecodeError:
+                            schedule_result = {}
+                        if schedule_result.get("status") == "ok":
+                            return finish_direct(format_schedule_answer(schedule_result))
 
                     messages.append({
                         "role":         "tool",
