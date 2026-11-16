@@ -1,4 +1,5 @@
 import unittest
+import app.answer as answer_module
 
 from pydantic import ValidationError
 
@@ -17,6 +18,52 @@ from app.answer import (
 
 
 class AnswerSchemaTests(unittest.TestCase):
+    def test_director_claim_requires_name_near_director_in_selected_source(self):
+        check = getattr(answer_module, "director_claim_supported", None)
+        self.assertIsNotNone(check)
+        self.assertTrue(check("Кто директор ИФМиБ?", "Директор — Иванов Иван Иванович.",
+                              ["Директор института Иванов Иван Иванович."]))
+        self.assertFalse(check("Кто директор ИФМиБ?", "Директор — Петров Петр Петрович.",
+                               ["Директор института Иванов Иван Иванович."]))
+        self.assertFalse(check("Кто директор ИФМиБ?", "Директор — Петров Петр Петрович.",
+                               ["Бывший директор института Петров Петр Петрович."]))
+
+    def test_director_source_can_put_name_and_job_in_separate_sentences(self):
+        excerpt = ("Директор Института фундаментальной медицины и биологии\n"
+                   "Киясов Андрей Павлович, доктор медицинских наук, профессор. "
+                   "Директор Института фундаментальной медицины и биологии.")
+        self.assertTrue(answer_module.director_claim_supported(
+            "Кто директор ИФМиБ?", "Директор — Киясов Андрей Павлович.", [excerpt]
+        ))
+
+    def test_group_clarification_is_not_a_factual_claim(self):
+        check = getattr(answer_module, "is_group_clarification", None)
+        self.assertIsNotNone(check)
+        self.assertTrue(check("Пожалуйста, укажите вашу группу, чтобы я мог найти расписание на завтра."))
+        self.assertFalse(check("Ваша группа ИВТ-21. Укажите вашу группу?"))
+
+    def test_payment_error_explains_limit_without_exposing_error_text(self):
+        render = getattr(answer_module, "provider_error_message", None)
+        self.assertIsNotNone(render)
+        error = type("ProviderError", (Exception,), {"status_code": 402})("secret")
+        self.assertIn("баланс", render(error).casefold())
+        self.assertNotIn("secret", render(error))
+        self.assertIn("соединение", render(Exception()).casefold())
+
+    def test_parent_source_is_not_hidden_by_a_longer_url(self):
+        parent = "https://kpfu.ru/biology-medicine/obrazovanie/specialitet"
+        text = f"Программа: [Стоматология]({parent}/stomatologiya)."
+        render = getattr(answer_module, "append_source_citations", None)
+        self.assertIsNotNone(render)
+        self.assertIn(f"[14]({parent})", render(text, [(14, parent)]))
+
+    def test_exact_source_link_is_not_duplicated(self):
+        url = "https://kpfu.ru/biology-medicine/obrazovanie/specialitet"
+        text = f"Источник: [Программы]({url})."
+        render = getattr(answer_module, "append_source_citations", None)
+        self.assertIsNotNone(render)
+        self.assertEqual(render(text, [(14, url)]), text)
+
     def test_schedule_formatter_keeps_subgroups_and_conflicting_source_time(self):
         from app.answer import format_schedule_answer
 

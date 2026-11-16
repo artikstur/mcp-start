@@ -12,6 +12,7 @@ from ..http import get_text
 
 ALLOWED_HOSTS = {"kpfu.ru", "www.kpfu.ru"}
 ALLOWED_PREFIX = "/biology-medicine"
+DIRECTOR_URL = "https://kpfu.ru/biology-medicine/struktura-instituta/direktor-instituta-fundamentalnoj-mediciny-i"
 
 
 def _normalize(text: str) -> str:
@@ -345,15 +346,25 @@ async def search_institute_info(
     if not query:
         return []
 
+    director_query = bool(re.search(r"\bдиректор\w*", query, re.IGNORECASE))
     pages = await crawl_pages()
+    if director_query and not any(page["url"] == DIRECTOR_URL for page in pages):
+        try:
+            director_page = await _extract_page(DIRECTOR_URL)
+        except Exception:
+            pass
+        else:
+            pages.append(director_page)
+
+    def ranking(page: dict) -> tuple[bool, float]:
+        has_director_statement = director_query and (page["url"] == DIRECTOR_URL or bool(re.search(
+            r"\bдиректор(?:ом|а)?\s+(?:института|ифмиб)\b", page["text"], re.IGNORECASE
+        )))
+        return has_director_statement, _score(query, page["title"], page["text"])
 
     ranked = sorted(
         pages,
-        key=lambda page: _score(
-            query,
-            page["title"],
-            page["text"],
-        ),
+        key=ranking,
         reverse=True,
     )
 
@@ -375,6 +386,8 @@ async def search_institute_info(
             title=page["title"],
             text=page["text"],
         )
+        if director_query and page["url"] == DIRECTOR_URL:
+            snippet = page["text"][:1200]
 
         results.append(
             {

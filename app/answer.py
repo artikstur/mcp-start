@@ -19,6 +19,36 @@ def parse_answer(content: str) -> Answer:
     return Answer.model_validate_json(content)
 
 
+def is_group_clarification(text: str) -> bool:
+    return bool(re.fullmatch(
+        r"\s*(?:пожалуйста,?\s*)?(?:укажите|назовите)\s+(?:вашу\s+)?группу"
+        r"(?:,?\s+чтобы\s+я\s+мог\s+найти\s+расписание(?:\s+на\s+завтра)?)?[.!?]?\s*",
+        text, re.IGNORECASE,
+    ))
+
+
+def provider_error_message(error: Exception) -> str:
+    if getattr(error, "status_code", None) == 402:
+        return "OpenRouter отклонил запрос: проверьте баланс и лимит API-ключа или уменьшите лимит ответа."
+    return "Сервис ответа временно недоступен. Проверьте соединение и повторите запрос."
+
+
+def director_claim_supported(query: str, answer: str, excerpts: list[str]) -> bool:
+    if not re.search(r"\bдиректор\w*", query, re.IGNORECASE):
+        return True
+    names = re.findall(r"\b[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+\b", answer)
+    if not names:
+        return False
+    for excerpt in excerpts:
+        for role in re.finditer(r"\bдиректор\w*", excerpt, re.IGNORECASE):
+            context = excerpt[max(0, role.start() - 100):role.end() + 180]
+            if re.search(r"(?:бывш\w*|экс[- ]|заместител\w*)\s+(?:директор\w*)", context, re.IGNORECASE):
+                continue
+            if all(name.casefold() in context.casefold() for name in names):
+                return True
+    return False
+
+
 def format_schedule_answer(payload: dict) -> str:
     """Render verified schedule rows without asking the model to reconstruct them."""
     if payload.get("status") != "ok":
@@ -128,6 +158,19 @@ def tool_result_source_urls(tool_name: str, content: str) -> set[str]:
 
 def cited_source_ids(answer: Answer, available_sources: dict[int, str]) -> list[int]:
     return [source_id for source_id in answer.sources if source_id in available_sources]
+
+
+def append_source_citations(text: str, citations: list[tuple[int, str]]) -> str:
+    existing_urls = {
+        match.rstrip(".,;:!?")
+        for match in re.findall(r"https?://[^\s<>()\[\]]+", text)
+    }
+    missing = [(source_id, url) for source_id, url in citations if url not in existing_urls]
+    if not missing:
+        return text
+    return text + "\n\nИсточники:\n" + "\n".join(
+        f"[{source_id}]({url})" for source_id, url in missing
+    )
 
 
 def remap_source_ids(

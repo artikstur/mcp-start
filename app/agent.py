@@ -18,10 +18,14 @@ from mcp.client.stdio import stdio_client
 from .context import HISTORY_BUDGET, compact_history, estimate_tokens, format_memory_context
 from .answer import (
     Answer,
+    append_source_citations,
     cited_source_ids,
+    director_claim_supported,
     enforce_tool_evidence,
     format_schedule_answer,
+    is_group_clarification,
     parse_answer,
+    provider_error_message,
     provider_cost_usd,
     remap_source_ids,
     remap_source_records,
@@ -279,6 +283,7 @@ async def run_openrouter_mcp(
 
             source_urls: dict[int, str] = {}
             source_tools: dict[int, str] = {}
+            source_excerpts: dict[int, str] = {}
             trusted_source_urls: set[str] = set()
             next_source_id = 1
             format_retry_used = False
@@ -294,10 +299,10 @@ async def run_openrouter_mcp(
                         max_tokens=MAX_COMPLETION_TOKENS,
                         temperature=temperature,
                     )
-                except Exception:
+                except Exception as exc:
                     token_usage_complete = False
                     provider_cost_complete = False
-                    answer = "Сервис ответа временно недоступен. Проверьте соединение и повторите запрос."
+                    answer = provider_error_message(exc)
                     usage = usage_snapshot()
                     _write_log({"ts": datetime.now().isoformat(timespec="seconds"), "model": MODEL,
                                 "query_chars": len(user_query), **usage})
@@ -341,6 +346,10 @@ async def run_openrouter_mcp(
                             sources=[],
                         )
 
+                    if (parsed_answer.source_tool is None and not parsed_answer.sources
+                            and is_group_clarification(parsed_answer.answer)):
+                        parsed_answer = parsed_answer.model_copy(update={"found": False})
+
                     has_tool_evidence = (
                         parsed_answer.source_tool in evidence_tools
                         and (
@@ -370,6 +379,13 @@ async def run_openrouter_mcp(
                              if tool == parsed_answer.source_tool},
                         )
 
+                    if (parsed_answer.found and not director_claim_supported(
+                            user_query, parsed_answer.answer,
+                            [source_excerpts.get(source_id, "") for source_id in parsed_answer.sources])):
+                        parsed_answer = Answer(
+                            answer="Не могу подтвердить, кто сейчас директор, по найденным источникам.",
+                            source_tool=None, found=False, sources=[],
+                        )
                     answer = parsed_answer.answer
                     if parsed_answer.source_tool in {"search_docs", "search_institute_info"}:
                         answer = sanitize_markdown_links(answer, trusted_source_urls)
@@ -377,13 +393,7 @@ async def run_openrouter_mcp(
                         (source_id, source_urls[source_id])
                         for source_id in cited_source_ids(parsed_answer, source_urls)
                     ]
-                    citations_to_append = [
-                        (source_id, url) for source_id, url in citations if url not in answer
-                    ]
-                    if citations_to_append:
-                        answer += "\n\nИсточники:\n" + "\n".join(
-                            f"[{source_id}]({url})" for source_id, url in citations_to_append
-                        )
+                    answer = append_source_citations(answer, citations)
                     usage = usage_snapshot()
                     _write_log({
                         "ts":    datetime.now().isoformat(timespec="seconds"),
@@ -463,6 +473,9 @@ async def run_openrouter_mcp(
                                 for source in document_result.get("sources", [])
                                 if isinstance(source, dict) and isinstance(source.get("id"), int)
                             })
+                            source_excerpts.update({source["id"]: str(source.get("text", ""))
+                                                    for source in document_result.get("sources", [])
+                                                    if isinstance(source, dict) and isinstance(source.get("id"), int)})
                             tool_content = json.dumps(document_result, ensure_ascii=False)
                         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
                             pass
@@ -475,6 +488,8 @@ async def run_openrouter_mcp(
                             source_tools.update({
                                 source["id"]: "search_institute_info" for source in institute_sources
                             })
+                            source_excerpts.update({source["id"]: str(source.get("title", "")) + "\n" + str(source.get("snippet", ""))
+                                                    for source in institute_sources})
                             tool_content = json.dumps(institute_sources, ensure_ascii=False)
                         except (TypeError, ValueError, json.JSONDecodeError):
                             pass

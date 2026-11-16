@@ -8,6 +8,34 @@ from app.sources.institute import _expand_query, _extract_main_text, search_inst
 
 
 class InstituteExtractionTests(unittest.TestCase):
+    def test_director_search_fetches_official_director_page(self):
+        import asyncio
+        director = {"title": "Директор Института фундаментальной медицины и биологии",
+                    "url": "https://kpfu.ru/biology-medicine/struktura-instituta/direktor-instituta-fundamentalnoj-mediciny-i",
+                    "text": "Киясов Андрей Павлович, профессор. Директор института.", "links": []}
+        async def run():
+            with patch("app.sources.institute.crawl_pages", new=AsyncMock(return_value=[])), \
+                 patch("app.sources.institute._extract_page", new=AsyncMock(return_value=director)) as fetch:
+                results = await search_institute_info("Кто директор ИФМиБ?")
+                return results, fetch
+        results, fetch = asyncio.run(run())
+        self.assertTrue(results)
+        self.assertEqual(results[0]["url"], director["url"])
+        fetch.assert_awaited_once_with(director["url"])
+
+    def test_director_search_prioritizes_page_with_director_statement(self):
+        pages = [
+            {"title": "ИФМиБ КФУ директор новости", "url": "https://kpfu.ru/news",
+             "text": "Новости ИФМиБ КФУ. Мероприятие и участники."},
+            {"title": "Руководство", "url": "https://kpfu.ru/director",
+             "text": "Директор института Иванов Иван Иванович."},
+        ]
+        import asyncio
+        async def run():
+            with patch("app.sources.institute.crawl_pages", new=AsyncMock(return_value=pages)):
+                return await search_institute_info("директор ИФМиБ КФУ")
+        self.assertEqual(asyncio.run(run())[0]["url"], pages[1]["url"])
+
     def test_extracts_page_body_without_header_or_sidebar_navigation(self):
         html = """
         <div id="ss_content">

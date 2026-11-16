@@ -318,7 +318,7 @@ async def get_group_schedule(
                 "status": "date_filter_unavailable",
                 "group": group,
                 "date": target_date.isoformat(),
-                "message": "В опубликованных файлах нет даты начала учебной недели; не буду угадывать расписание на конкретный день.",
+                "message": "Не удалось определить дату начала учебной недели в проверенных файлах; не буду угадывать расписание на конкретный день.",
                 "source_page": settings.schedule_page_url,
             }
         matches.append({
