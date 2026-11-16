@@ -21,11 +21,15 @@ from .answer import (
     append_source_citations,
     cited_source_ids,
     director_claim_supported,
+    filter_department_answer,
     enforce_tool_evidence,
     format_schedule_answer,
     is_group_clarification,
+    has_invalid_schedule_date,
+    infer_source_tool,
     parse_answer,
     provider_error_message,
+    qualify_absence_claim,
     provider_cost_usd,
     remap_source_ids,
     remap_source_records,
@@ -212,6 +216,9 @@ async def run_openrouter_mcp(
         STORE.confirm_pending_fact(user_id, session_id, False)
         return finish_direct("Хорошо, не сохранял этот факт.")
 
+    if has_invalid_schedule_date(user_query):
+        return finish_direct("Указана несуществующая дата. Проверьте день, месяц и год.")
+
     history = STORE.load_history(user_id, session_id)
     history_before = estimate_tokens(history)
 
@@ -289,6 +296,7 @@ async def run_openrouter_mcp(
             format_retry_used = False
             evidence_retry_used = False
             evidence_tools: set[str] = set()
+            search_completed = False
             for _ in range(5):
                 try:
                     response = await llm.chat.completions.create(
@@ -350,6 +358,8 @@ async def run_openrouter_mcp(
                             and is_group_clarification(parsed_answer.answer)):
                         parsed_answer = parsed_answer.model_copy(update={"found": False})
 
+                    parsed_answer = infer_source_tool(parsed_answer, source_tools, evidence_tools)
+
                     has_tool_evidence = (
                         parsed_answer.source_tool in evidence_tools
                         and (
@@ -386,7 +396,12 @@ async def run_openrouter_mcp(
                             answer="Не могу подтвердить, кто сейчас директор, по найденным источникам.",
                             source_tool=None, found=False, sources=[],
                         )
-                    answer = parsed_answer.answer
+                    if parsed_answer.found:
+                        parsed_answer = parsed_answer.model_copy(update={"answer": filter_department_answer(
+                            user_query, parsed_answer.answer,
+                            [source_excerpts.get(source_id, "") for source_id in parsed_answer.sources
+                             if source_tools.get(source_id) == parsed_answer.source_tool])})
+                    answer = qualify_absence_claim(parsed_answer.answer, search_completed)
                     if parsed_answer.source_tool in {"search_docs", "search_institute_info"}:
                         answer = sanitize_markdown_links(answer, trusted_source_urls)
                     citations = [
@@ -449,6 +464,7 @@ async def run_openrouter_mcp(
                             return finish_direct("Можно запомнить только группу, курс или предмет.")
                         return finish_direct(f"Запомнить: {arguments['key']} = {arguments['value']}? Ответьте «да» или «нет».")
 
+                    result = None
                     try:
                         result = await session.call_tool(call.function.name, arguments)
                         result_parts = []
@@ -462,6 +478,21 @@ async def run_openrouter_mcp(
                         tool_content = json.dumps(
                             {"error": "Инструмент временно недоступен."}, ensure_ascii=False
                         )
+                    if result is not None and getattr(result, "isError", False):
+                        tool_content = json.dumps(
+                            {"error": "Инструмент временно недоступен."}, ensure_ascii=False
+                        )
+                    try:
+                        payload = json.loads(tool_content)
+                        if result is not None and not getattr(result, "isError", False):
+                            if call.function.name == "search_institute_info" and isinstance(payload, list):
+                                search_completed = True
+                            elif call.function.name == "search_docs" and isinstance(payload, dict) and isinstance(payload.get("found"), bool):
+                                search_completed = True
+                            elif call.function.name == "get_group_schedule" and isinstance(payload, dict) and payload.get("status") in {"ok", "not_found_in_public_documents", "no_classes_found_on_date"}:
+                                search_completed = True
+                    except (ValueError, TypeError):
+                        pass
                     if call.function.name == "search_docs":
                         try:
                             document_result = json.loads(tool_content)

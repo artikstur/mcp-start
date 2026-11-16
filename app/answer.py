@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date
 
 from pydantic import BaseModel, ConfigDict
 
@@ -17,6 +18,75 @@ class Answer(BaseModel):
 
 def parse_answer(content: str) -> Answer:
     return Answer.model_validate_json(content)
+
+
+def has_invalid_schedule_date(query: str) -> bool:
+    if not re.search(r"расписан|пересдач|заняти|экзамен|зач[её]т", query, re.IGNORECASE):
+        return False
+    months = {name: i for i, name in enumerate(("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"), 1)}
+    matches = []
+    for match in re.finditer(r"(?<!\d)(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)", query):
+        matches.append(tuple(map(int, match.groups())))
+    for match in re.finditer(r"(?<!\d)(\d{1,2})\.(\d{1,2})\.(\d{4})(?!\d)", query):
+        day, month, year = map(int, match.groups())
+        matches.append((year, month, day))
+    for match in re.finditer(r"(?<!\d)(\d{1,2})\s+(" + "|".join(months) + r")(?:\s+(\d{4})(?!\d))?", query, re.IGNORECASE):
+        day, month, year = match.groups()
+        matches.append((int(year) if year else 2000, months[month.casefold()], int(day)))
+    for year, month, day in matches:
+        try:
+            date(year, month, day)
+        except ValueError:
+            return True
+    return False
+
+
+def qualify_absence_claim(text: str, search_completed: bool) -> str:
+    if not search_completed and re.search(r"не\s+(?:найден\w*|наш[её]л\w*|обнаружен\w*)", text, re.IGNORECASE):
+        return "Не могу подтвердить эту информацию по доступным источникам."
+    return text
+
+
+def infer_source_tool(answer: Answer, source_tools: dict[int, str], evidence_tools: set[str]) -> Answer:
+    if not answer.found or answer.source_tool is not None or not answer.sources:
+        return answer
+    if any(source_id not in source_tools for source_id in answer.sources):
+        return answer
+    tools = {source_tools[source_id] for source_id in answer.sources}
+    if len(tools) == 1 and tools <= evidence_tools:
+        return answer.model_copy(update={"source_tool": next(iter(tools))})
+    return answer
+
+
+def _department_claims(answer: str) -> list[str]:
+    pattern = (r"\b(?:кафедр[ауы]|центр|высшая\s+школа)\s+[а-яё-]+"
+               r"(?:\s+(?!(?:а|также|кафедр[ауы]|центр|высшая)\b)[а-яё-]+){0,6}")
+    return [re.sub(r"\s+и$", "", match.group(0), flags=re.IGNORECASE)
+            for match in re.finditer(pattern, answer, re.IGNORECASE)]
+
+
+def _department_normalize(text: str) -> str:
+    text = text.casefold().replace("ё", "е")
+    return re.sub(r"\bкафедр[уы]\b", "кафедра", text)
+
+
+def departments_supported(query: str, answer: str, excerpts: list[str]) -> bool:
+    if not re.search(r"подразделени|кафедр", query, re.IGNORECASE):
+        return True
+    sources = _department_normalize(" ".join(excerpts))
+    return all(_department_normalize(claim) in sources for claim in _department_claims(answer))
+
+
+def filter_department_answer(query: str, answer: str, excerpts: list[str]) -> str:
+    if departments_supported(query, answer, excerpts):
+        return answer
+    sources = _department_normalize(" ".join(excerpts))
+    supported = [claim for claim in _department_claims(answer)
+                 if _department_normalize(claim) in sources]
+    if not supported:
+        return "Не могу подтвердить названные подразделения по выбранным источникам."
+    return ("Подтверждённые подразделения:\n" + "\n".join(f"- {claim}" for claim in supported)
+            + "\n\nОстальные названия не удалось подтвердить по выбранным источникам.")
 
 
 def is_group_clarification(text: str) -> bool:

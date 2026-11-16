@@ -18,6 +18,50 @@ from app.answer import (
 
 
 class AnswerSchemaTests(unittest.TestCase):
+    def test_missing_tool_is_inferred_only_from_unambiguous_verified_ids(self):
+        answer = Answer(answer="Факт", source_tool=None, found=True, sources=[15])
+        infer = answer_module.infer_source_tool
+        self.assertEqual(infer(answer, {15: "search_institute_info"}, {"search_institute_info"}).source_tool,
+                         "search_institute_info")
+        self.assertIsNone(infer(answer, {15: "search_institute_info"}, set()).source_tool)
+        self.assertIsNone(infer(answer.model_copy(update={"sources": [15, 16]}),
+                                {15: "search_institute_info", 16: "search_docs"},
+                                {"search_institute_info", "search_docs"}).source_tool)
+        self.assertIsNone(infer(answer.model_copy(update={"sources": [15, 99]}),
+                                {15: "search_institute_info"}, {"search_institute_info"}).source_tool)
+
+    def test_partial_departments_keep_only_supported_items(self):
+        text = ("В состав входят Высшая школа медицины, Высшая школа биологии, "
+                "а также Центр последипломного образования и аккредитации.")
+        sources = ["ВЫСШАЯ ШКОЛА МЕДИЦИНЫ. ВЫСШАЯ ШКОЛА БИОЛОГИИ."]
+        result = answer_module.filter_department_answer("Какие подразделения входят?", text, sources)
+        self.assertIn("Высшая школа медицины", result)
+        self.assertIn("Высшая школа биологии", result)
+        self.assertNotIn("Центр последипломного", result)
+        self.assertIn("не удалось подтвердить", result.casefold())
+
+    def test_invalid_explicit_schedule_dates_are_detected(self):
+        self.assertTrue(answer_module.has_invalid_schedule_date("Расписание группы 01.2-514 на 31 февраля 2027 года"))
+        self.assertTrue(answer_module.has_invalid_schedule_date("Расписание на 2027-02-31"))
+        self.assertTrue(answer_module.has_invalid_schedule_date("Расписание на 31 февраля"))
+        self.assertFalse(answer_module.has_invalid_schedule_date("Расписание на 29 февраля"))
+        self.assertFalse(answer_module.has_invalid_schedule_date("Расписание на 29 февраля 2028 года"))
+        self.assertFalse(answer_module.has_invalid_schedule_date("Что было 31 февраля 2027 года в фильме?"))
+
+    def test_unsearched_absence_is_not_presented_as_searched(self):
+        answer = "Не могу придумать дату. Информация не найдена в доступных официальных источниках."
+        self.assertNotIn("не найдена", answer_module.qualify_absence_claim(answer, False))
+        self.assertEqual(answer_module.qualify_absence_claim(answer, True), answer)
+        refusal = "С рецептом шоколадного торта не помогу."
+        self.assertEqual(answer_module.qualify_absence_claim(refusal, False), refusal)
+
+    def test_every_named_department_must_be_in_selected_source(self):
+        text = "Кафедра биоэкологии, кафедра физиологии человека и животных, а также Центр последипломного образования."
+        partial = ["Кафедра биоэкологии, гигиены и общественного здоровья"]
+        self.assertFalse(answer_module.departments_supported("Какие подразделения входят в ИФМиБ?", text, partial))
+        all_sources = ["Кафедра биоэкологии. Кафедра физиологии человека и животных. Центр последипломного образования."]
+        self.assertTrue(answer_module.departments_supported("Какие подразделения входят в ИФМиБ?", text, all_sources))
+
     def test_director_claim_requires_name_near_director_in_selected_source(self):
         check = getattr(answer_module, "director_claim_supported", None)
         self.assertIsNotNone(check)
